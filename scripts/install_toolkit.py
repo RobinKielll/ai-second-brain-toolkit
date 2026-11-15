@@ -29,6 +29,7 @@ if not hasattr(Path, "is_junction"):
             return False
     Path.is_junction = _is_junction  # type: ignore[attr-defined]
 import shutil
+import stat
 import subprocess
 import sys
 import zipfile
@@ -554,8 +555,15 @@ def migrate_private_bundle(
                     report["restored_files"].append(str(out_path))
                     if not dry_run:
                         out_path.parent.mkdir(parents=True, exist_ok=True)
-                        with src_file.open('rb') as src, out_path.open('xb') as dst:
+                        # Keep content private from creation; open() owns the descriptor
+                        # and retains exclusive, binary no-clobber semantics on Windows.
+                        with src_file.open('rb') as src, open(
+                            out_path, 'xb', opener=lambda path, flags: os.open(path, flags, 0o600)
+                        ) as dst:
                             shutil.copyfileobj(src, dst)
+                            if os.name == 'posix':
+                                dst.flush()
+                                os.fchmod(dst.fileno(), stat.S_IMODE(os.fstat(src.fileno()).st_mode))
     else:
         raise ValueError(f"Unsupported migration bundle format: {bundle}")
 
